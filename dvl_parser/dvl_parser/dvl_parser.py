@@ -1,11 +1,12 @@
-
-# --------- Multi agent localization node ---------
 import rclpy
 import numpy as np
 from rclpy.node import Node
 from std_msgs.msg import String
 from frost_interfaces.msg import DVL
+from geometry_msgs.msg import TwistWithCovarianceStamped
+from geometry_msgs.msg import PoseWithCovarianceStamped
 import crcmod
+from std_msgs.msg import Float64
 
 test_wru = "wru,0,0.070,1.10,-40,-95*9c"
 
@@ -15,10 +16,13 @@ class DVLParser(Node):
     def __init__(self):
         super().__init__('DVLParser')
         self.subscription_dvl_data = self.create_subscription(DVL,'dvl_data',self.dvl_listener,10)
-        # self.publisher_dvl_sample = self.create_publisher(String, 'dvl_data', 10)
         # self.timer = self.create_timer(1, self.timer_callback)
         self.parsed_dvl_data = {}
-    
+
+        self.publisher_dvl_velocity = self.create_publisher(TwistWithCovarianceStamped, 'dvl_velocity', 10)
+        self.publisher_dvl_pose = self.create_publisher(PoseWithCovarianceStamped, 'dvl_pose', 10)
+        self.publisher_dvl_depth = self.create_publisher(Float64, 'dvl_depth', 10)
+     
    
     def do_checksum(self, dvl_string):
         crc = crcmod.predefined.mkPredefinedCrcFun("crc-8")
@@ -71,6 +75,8 @@ class DVLParser(Node):
             parsed_wrz["time"] = data[10]
             # 8 bit status mask. Bit 0 is set to 1 for high temperature and DVL will soon enter thermal shutdown. Remaining bits are reserved for future use.
             parsed_wrz["status"] = data[11]
+
+            self.parsed_dvl_data[report_label] = parsed_wrz
 
 
 
@@ -150,6 +156,42 @@ class DVLParser(Node):
         print(self.parsed_dvl_data)
 
 
+        self.velocity_publish() #TwistWithCovarianceStamped
+        self.depth_publish() #std_msg Float64
+        self.state_publish() #PoseWithCovarianceStamped
+
+    def depth_publish(self):
+        msg = Float64()
+        
+        msg.data = self.parsed_dvl_data['wru']['distance']
+
+        self.publisher_dvl_depth.publish(msg)
+
+
+    def state_publish(self):
+        msg = PoseWithCovarianceStamped()
+
+        msg.pose.quaternion.x = self.parsed_dvl_data['wrp']['roll']
+        msg.pose.quaternion.y = self.parsed_dvl_data['wrp']['pitch']
+        msg.pose.quaternion.z = self.parsed_dvl_data['wrp']['yaw']
+        
+        msg.pose.point.x = self.parsed_dvl_data['wrp']['x']
+        msg.pose.point.y = self.parsed_dvl_data['wrp']['y']
+        msg.pose.point.z = self.parsed_dvl_data['wrp']['z']
+        
+        self.publisher_dvl_pose.publish(msg)
+
+    def velocity_publish(self):
+
+        msg = TwistWithCovarianceStamped()
+
+        msg.twist.twist.linear.x = self.parsed_dvl_data['wrz']['vx']
+        msg.twist.twist.linear.y = self.parsed_dvl_data['wrz']['vy']
+        msg.twist.twist.linear.z = self.parsed_dvl_data['wrz']['vz']
+
+        self.publisher_dvl_velocity.publish(msg)
+
+
         # TODO: after calling the three parse functions above, we need to package the information contained in the 
         # dict. parsed_dvl_data in the correct message types and then publish them to the necessary topics
         # I think that it is written on the board. 
@@ -159,7 +201,7 @@ def main(args=None):
     rclpy.init(args=args)
     parser = DVLParser()
     rclpy.spin(parser)
-    localizer.destroy_node()
+    parser.destroy_node()
     rclpy.shutdown()
 
 
